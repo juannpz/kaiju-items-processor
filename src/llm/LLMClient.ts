@@ -34,7 +34,6 @@ export class LLMClient {
                         name: "extract_items",
                         description:
                             "Extrae los items de inventario del contenido del documento analizado",
-                        strict: true,
                         parameters: toolParameters,
                     },
                 },
