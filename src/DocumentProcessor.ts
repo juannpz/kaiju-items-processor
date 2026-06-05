@@ -16,7 +16,7 @@ import { formatForLLM } from "./utils/contentFormatter.ts";
 import { coerceValue } from "./utils/typeCoercion.ts";
 import type { SchemaField } from "./types.ts";
 
-const DEFAULT_LLM_TIMEOUT_MS = 120_000;
+const DEFAULT_LLM_TIMEOUT_MS = 300_000;
 
 export class DocumentProcessor {
     private schema: ProcessorConfig["schema"];

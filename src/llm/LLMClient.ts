@@ -38,6 +38,7 @@ export class LLMClient {
                     },
                 },
             ],
+            thinking: { type: "disabled" },
             temperature: this.config.temperature,
             max_tokens: this.config.maxTokens,
         };
