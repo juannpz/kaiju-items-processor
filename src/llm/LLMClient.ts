@@ -38,10 +38,6 @@ export class LLMClient {
                     },
                 },
             ],
-            tool_choice: {
-                type: "function" as const,
-                function: { name: "extract_items" },
-            },
             temperature: this.config.temperature,
             max_tokens: this.config.maxTokens,
         };
