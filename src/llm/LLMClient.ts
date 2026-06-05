@@ -67,7 +67,16 @@ export class LLMClient {
         const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
 
         if (!toolCall) {
+            const finishReason = data.choices?.[0]?.finish_reason;
             const content = data.choices?.[0]?.message?.content;
+
+            if (finishReason === "length") {
+                throw new LLMError(
+                    "LLM response truncated due to max_tokens limit. Increase max_tokens in LLMConfig.",
+                    0,
+                );
+            }
+
             throw new LLMError(
                 `LLM did not return a tool call. Raw response: ${content ?? "empty"}`,
                 0,
@@ -84,13 +93,16 @@ export class LLMClient {
         let parsed: LLMToolCallResponse;
         try {
             parsed = JSON.parse(toolCall.function.arguments);
-        } catch {
-            throw new LLMError(
-                `Failed to parse LLM tool call arguments: ${
-                    toolCall.function.arguments.slice(0, 500)
-                }`,
-                0,
-            );
+        } catch (parseError) {
+            const raw = toolCall.function.arguments;
+            const preview = raw.slice(0, 500);
+            const endsIncomplete = raw.length > 0 && !raw.endsWith("}") && !raw.endsWith("]");
+
+            const message = endsIncomplete
+                ? `LLM response truncated (${raw.length} chars). Increase max_tokens. Preview: ${preview}...`
+                : `Failed to parse LLM tool call arguments: ${preview}`;
+
+            throw new LLMError(message, 0);
         }
 
         return { result: parsed, tokensUsed };
@@ -109,6 +121,7 @@ export class LLMError extends Error {
 
 interface LLMApiResponse {
     choices?: Array<{
+        finish_reason?: string;
         message?: {
             content?: string;
             tool_calls?: Array<{
