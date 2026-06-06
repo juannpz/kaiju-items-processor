@@ -1,5 +1,6 @@
 export type ColumnTarget =
     | { type: "field"; field: string }
+    | { type: "field_suffix"; field: string }
     | { type: "price_channel"; channel_name: string; channel_id?: string }
     | { type: "ignore" };
 

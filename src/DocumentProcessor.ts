@@ -199,7 +199,12 @@ export class DocumentProcessor {
             }
 
             if (typeof colDef.target === "string") {
-                columns[colName] = { type: "field", field: colDef.target };
+                if (colDef.target.startsWith("suffix:")) {
+                    const parentField = colDef.target.replace("suffix:", "");
+                    columns[colName] = { type: "field_suffix", field: parentField };
+                } else {
+                    columns[colName] = { type: "field", field: colDef.target };
+                }
                 continue;
             }
 

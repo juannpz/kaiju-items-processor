@@ -24,6 +24,7 @@ export function applyColumnMapping(
 
         const item: Record<string, unknown> = {};
         const priceEntries: Record<string, unknown>[] = [];
+        const suffixes: Record<string, string[]> = {};
         const rowMissingFields: string[] = [];
 
         for (const [colName, target] of Object.entries(mapping.columns)) {
@@ -41,15 +42,30 @@ export function applyColumnMapping(
                 item[target.field] = coerceCell(rawValue, schemaField);
             }
 
+            if (target.type === "field_suffix") {
+                const val = coerceToString(rawValue);
+                if (val) {
+                    suffixes[target.field] = suffixes[target.field] ?? [];
+                    suffixes[target.field].push(val);
+                }
+            }
+
             if (target.type === "price_channel") {
                 const numValue = coerceToNumber(rawValue);
                 if (numValue !== null) {
                     priceEntries.push({
-                        price: numValue,
+                        price: Math.round(numValue * 100) / 100,
                         channel_id: target.channel_id ?? slugify(target.channel_name),
                         channel_name: target.channel_name,
                     });
                 }
+            }
+        }
+
+        for (const [field, suffixValues] of Object.entries(suffixes)) {
+            const baseValue = item[field];
+            if (baseValue && suffixValues.length > 0) {
+                item[field] = String(baseValue) + " " + suffixValues.join(" ");
             }
         }
 

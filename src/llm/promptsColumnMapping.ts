@@ -45,6 +45,7 @@ REGLAS DE MAPEO:
    Ejemplos reales que aparecen en planillas de proveedores argentinos:
    - "COD", "Código", "SKU", "CODIGO INTERNO", "Codigo EAN" → \`barcode\`
    - "PRODUCTO", "Item", "Descripción del Artículo", "Denominación" → \`name\`
+   - "DESCRIPCION ADICIONAL" → \`suffix:name\` (se anexa al nombre, ej: "Bulón M6" + "x 20mm" → "Bulón M6 x 20mm")
    - "FAMILIA", "Grupo", "Categoría", "Rubro" → \`category_id\`
    - "MARCA", "Fabricante" → \`supplier_id\`
    - "Unidad de Medida", "Unidad de Medida (UM)", "UM", "Unidad" → \`unit_of_measure\`
@@ -58,6 +59,7 @@ REGLAS DE MAPEO:
 
 3. Formato de la respuesta:
    - Campo simple → { "target": "nombre_del_campo" }
+   - Sufijo de otro campo (se anexa al valor principal) → { "target": "suffix:nombre_del_campo" }
    - Columna ignorada → { "target": null }
    - Columna de precio → { "target": { "channel_name": "Nombre", "channel_id": "slug" } }
 
@@ -126,6 +128,7 @@ MAPPING RULES:
 
 3. Response format:
    - Simple field → { "target": "field_name" }
+   - Suffix to another field → { "target": "suffix:field_name" }
    - Ignored column → { "target": null }
    - Price column → { "target": { "channel_name": "Name", "channel_id": "slug" } }
 
