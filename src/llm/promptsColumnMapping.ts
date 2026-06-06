@@ -6,14 +6,16 @@ export function buildColumnMappingSystemPrompt(
     locale?: string,
 ): string {
     const lang = locale?.startsWith("es") ? "es" : "en";
-    return lang === "es" ? buildSpanishColumnPrompt(schema) : buildEnglishColumnPrompt(schema);
+    return lang === "es"
+        ? buildSpanishColumnPrompt(schema)
+        : buildEnglishColumnPrompt(schema);
 }
 
 function buildFieldDescriptions(schema: TargetSchema): string {
     return schema.fields
         .map((f) => {
             const req = f.required ? " [OBLIGATORIO]" : " [opcional]";
-            const desc = f.description ? ` - ${f.description}` : "";
+            const desc = f.description ? ` — ${f.description}` : "";
             const typeInfo = f.type === "array"
                 ? `array de {${
                     f.items?.fields?.map((sf) => `${sf.name}: ${sf.type}`).join(", ") ?? ""
@@ -29,51 +31,70 @@ function buildSpanishColumnPrompt(schema: TargetSchema): string {
     const requiredFields = getRequiredFields(schema);
     const allFields = getAllFieldNames(schema);
 
-    return `Sos un analizador de columnas de planillas de inventario. Tu tarea es recibir los encabezados de una planilla y determinar a qué campo del sistema Kaiju corresponde CADA columna. NO extraigas los items — solo analizá las columnas.
+    return `Sos un analizador de columnas de planillas de inventario del mercado argentino.
+Tu tarea es recibir los encabezados de una planilla de proveedor y determinar a qué campo
+del sistema Kaiju corresponde CADA columna. NO extraigas los items — solo devolvé el mapeo.
 
 ESQUEMA DE DESTINO:
 ${fieldDescriptions}
 
 Campos obligatorios: ${requiredFields.join(", ")}
-Todos los campos: ${allFields.join(", ")}
+Todos los campos disponibles: ${allFields.join(", ")}
 
-REGLAS DE MAPEO DE COLUMNAS:
+REGLAS DE MAPEO:
 
-1. Analizá tanto el NOMBRE de la columna como los VALORES de ejemplo para determinar el mapeo.
+1. Analizá tanto el NOMBRE de la columna como los VALORES de muestra.
+   Ejemplos reales que aparecen en planillas de proveedores argentinos:
+   - "COD", "Código", "SKU", "CODIGO INTERNO", "Codigo EAN" → \`barcode\`
+   - "PRODUCTO", "Item", "Descripción del Artículo", "Denominación" → \`name\`
+   - "FAMILIA", "Grupo", "Categoría", "Rubro" → \`category_id\`
+   - "MARCA", "Fabricante" → \`supplier_id\`
+   - "Unidad de Medida", "Unidad de Medida (UM)", "UM", "Unidad" → \`unit_of_measure\`
+   - "Stock", "Cantidad", "Existencia", "UNIDAD CAJA GRANEL" → \`current_stock\`
+   - "IVA", "Alíc. IVA", "IVA %" → \`arca_iva_aliquot_id\`
 
-2. Para campos simples (string/number/boolean), usá el formato:
-   { "target": "nombre_del_campo" }
+2. Columnas con nombre genérico como "col_0", "col_6":
+   El parser les puso ese nombre porque el encabezado original estaba vacío.
+   Determiná su propósito SOLO mirando los valores de ejemplo.
+   Si no tenés certeza, marcalas como ignoradas (target: null).
 
-3. Para campos de tipo "array" como \`prices\`, cada columna de precio independiente debe mapearse como:
-   { "target": { "channel_name": "Nombre del Canal", "channel_id": "slug_del_canal" } }
-   Ejemplo: si hay columnas "PVP" y "PVP Premium", cada una genera un canal distinto.
-   Si hay una sola columna de precio, usá channel_name: "Lista".
-   Los nombres de canales comunes: "Lista", "Neto", "PVP", "Mayorista", "Minorista", "Premium".
+3. Formato de la respuesta:
+   - Campo simple → { "target": "nombre_del_campo" }
+   - Columna ignorada → { "target": null }
+   - Columna de precio → { "target": { "channel_name": "Nombre", "channel_id": "slug" } }
 
-4. Para columnas que NO corresponden a ningún campo del esquema, usá:
-   { "target": null }
+4. CANALES DE PRECIO (clave):
+   Cada columna de precio independiente genera un entry DISTINTO en \`prices\`.
+   Ejemplo con 3 columnas: "PVP", "PVP Premium", "Precio de Lista"
+     "PVP"           → { "target": { "channel_name": "PVP", "channel_id": "pvp" } }
+     "PVP Premium"   → { "target": { "channel_name": "PVP Premium", "channel_id": "pvp_premium" } }
+     "Precio de Lista" → { "target": { "channel_name": "Lista", "channel_id": "lista" } }
+   Si hay UNA sola columna de precio, usá channel_name: "Lista".
 
-5. Distinción entre categoría y proveedor:
-   - Si la columna agrupa tipos de productos (ej: "HERRAMIENTAS", "BULONERÍA") → \`category_id\`
-   - Si la columna es la marca/fabricante (ej: "BREMEN", "CORDOBABULONES") → \`supplier_id\`
+5. CATEGORÍA vs MARCA:
+   - Agrupa TIPOS de productos ("HERRAMIENTAS", "BULONERÍA", "Automotor") → \`category_id\`
+   - Identifica el FABRICANTE ("BREMEN", "CORDOBABULONES", "TorniFast") → \`supplier_id\`
+   Si la planilla tiene ambas columnas (ej: "Categoría" + "Marca"), mapeá cada una a su campo.
 
-6. Interpretación de IVA:
-   - "21", "21%", "IVA 21" → \`arca_iva_aliquot_id\` como string "21%"
-   - "0.21" → normalizar a "21%"
+6. IVA:
+   - "21" → "21%"
+   - "0.21" → "21%"
+   - "21%", "IVA 21" → "21%"
+   Siempre normalizá al formato "XX%".
 
-7. Interpretación de unidad de medida:
-   - "unid", "unidades", "Unidad", "UM" → \`unit_of_measure\`
-   - "kg", "metros", "litros", "bolsa", "rollo", "mt" → \`unit_of_measure\`
+7. STOCK:
+   Si hay múltiples columnas de cantidad (ej: "UNIDAD CAJA GRANEL" y "UNIDAD CAJA FRACCION"),
+   elegí la que mejor represente el stock total (generalmente la de valores más altos).
 
-8. Interpretación de stock:
-   - Columnas de cantidad disponible o en caja → \`current_stock\`
-   - Si hay múltiples columnas de cantidad (ej: "UNIDAD CAJA GRANEL", "UNIDAD CAJA FRACCION"), elegí la más representativa del stock total.
+8. \`item_type_id\` es obligatorio en el esquema pero NUNCA aparece en planillas de proveedor.
+   Es esperable que figure en missing_fields. No intentes inferirlo de otras columnas.
 
-9. Identificá la FILA donde empiezan los encabezados reales. Las filas anteriores (títulos, fechas, metadatos) deben ignorarse. Devolvé el número de fila (0-indexado) en \`header_row\`.
+9. Identificá la FILA donde empiezan los encabezados reales (0-indexado).
+   Las filas anteriores (títulos, fechas, logos, "Lista de Precios", etc.) ignorarlas.
+   No cuentan como filas de datos.
 
-10. En \`missing_fields\`, listá los campos OBLIGATORIOS que no tienen ninguna columna asignada.
-
-11. En \`warnings\`, reportá situaciones como columnas ambiguas o valores que no coinciden con el tipo esperado.
+10. En \`missing_fields\`, listá solo los OBLIGATORIOS sin columna asignada.
+    En \`warnings\`, reportá columnas ambiguas o con valores que no calzan con el tipo esperado.
 
 Usá SIEMPRE la función \`analyze_columns\` para devolver los resultados.`;
 }
@@ -83,23 +104,50 @@ function buildEnglishColumnPrompt(schema: TargetSchema): string {
     const requiredFields = getRequiredFields(schema);
     const allFields = getAllFieldNames(schema);
 
-    return `You are a column analyzer for inventory spreadsheets. Your task is to receive spreadsheet headers and sample rows and determine which Kaiju system field each column maps to. DO NOT extract items — only analyze columns.
+    return `You are a column analyzer for inventory spreadsheets. Determine which Kaiju system field each column maps to. DO NOT extract items — only return the column mapping.
 
 TARGET SCHEMA:
 ${fieldDescriptions}
 
-Required: ${requiredFields.join(", ")}
-All fields: ${allFields.join(", ")}
+Required fields: ${requiredFields.join(", ")}
+All available: ${allFields.join(", ")}
 
 MAPPING RULES:
-1. Analyze both column NAME and sample VALUES.
-2. Simple fields: { "target": "field_name" }
-3. For \`prices\` (array), each price column maps as:
-   { "target": { "channel_name": "Channel Name", "channel_id": "channel_slug" } }
-4. Ignored columns: { "target": null }
-5. Distinguish category (groups products) vs supplier (brand/manufacturer).
-6. IVA: normalize "21", "0.21", "21%" → "21%"
-7. Report header_row (0-indexed) — rows before it are metadata.
-8. Report missing_fields for required fields with no column.
-9. Always use the \`analyze_columns\` function.`;
+
+1. Analyze both column names and sample values. Common column name patterns:
+   - "COD", "SKU", "Code", "EAN", "Barcode" → \`barcode\`
+   - "Product", "Item", "Description", "Name" → \`name\`
+   - "Category", "Group", "Family", "Rubro" → \`category_id\`
+   - "Brand", "Manufacturer", "Supplier" → \`supplier_id\`
+   - "Stock", "Quantity", "Qty", "Available" → \`current_stock\`
+   - "Unit", "UM", "UOM", "Measure" → \`unit_of_measure\`
+   - "VAT", "Tax", "IVA" → \`arca_iva_aliquot_id\`
+
+2. Columns with generic names like "col_0", "col_6" had empty headers originally.
+   Analyze by VALUES only. If uncertain, mark as ignored (target: null).
+
+3. Response format:
+   - Simple field → { "target": "field_name" }
+   - Ignored column → { "target": null }
+   - Price column → { "target": { "channel_name": "Name", "channel_id": "slug" } }
+
+4. PRICE CHANNELS: Each independent price column creates a separate entry in \`prices\`.
+   Example: "PVP", "MSRP", "Wholesale" → each gets its own channel entry.
+   Single price column → channel_name: "List".
+
+5. CATEGORY vs SUPPLIER:
+   - Groups product types ("Tools", "Hardware") → \`category_id\`
+   - Identifies the brand/manufacturer → \`supplier_id\`
+
+6. IVA normalization: "21", "0.21", "21%" → "21%"
+
+7. STOCK: if multiple quantity columns, choose the one representing TOTAL stock (higher values).
+
+8. \`item_type_id\` is required but NEVER present in supplier lists. Expected in missing_fields.
+
+9. Report \`header_row\` (0-indexed) where actual column headers start. Skip title/metadata rows above it.
+
+10. In \`missing_fields\`, list only REQUIRED fields without a column. In \`warnings\`, report ambiguous columns.
+
+Always use the \`analyze_columns\` function to return results.`;
 }
