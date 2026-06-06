@@ -14,17 +14,6 @@ regardless of how the source document names or organizes its columns.
 - **Type coercion safety net**: Post-processes LLM output to ensure correct types
 - **Deno-first**: Published on JSR, zero Node.js-specific dependencies
 
-## Installation
-
-```json
-// deno.json
-{
-    "imports": {
-        "@juannpz/kaiju-items-processor": "jsr:@juannpz/kaiju-items-processor@0.1.0"
-    }
-}
-```
-
 ## Quick Start
 
 ```typescript
