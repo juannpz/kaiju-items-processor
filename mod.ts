@@ -8,8 +8,12 @@ export {
 } from "./src/index.ts";
 
 export type {
+    ApplyMappingResult,
+    ColumnMapping,
+    ColumnTarget,
     DocumentFormat,
     DocumentInput,
+    LLMColumnMappingResponse,
     LLMConfig,
     MissingField,
     ProcessInput,

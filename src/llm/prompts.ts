@@ -1,6 +1,8 @@
 import type { TargetSchema } from "../types.ts";
 import { getAllFieldNames, getRequiredFields } from "../schema.ts";
 
+export { buildColumnMappingSystemPrompt } from "./promptsColumnMapping.ts";
+
 export function buildSystemPrompt(schema: TargetSchema, locale?: string): string {
     const lang = locale?.startsWith("es") ? "es" : "en";
     return lang === "es" ? buildSpanishPrompt(schema) : buildEnglishPrompt(schema);

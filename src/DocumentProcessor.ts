@@ -9,12 +9,13 @@ import type {
 } from "./types.ts";
 import type { RawContent, TabularData } from "./parsers/types.ts";
 import { detectFormat, getParser } from "./parsers/index.ts";
-import { buildSystemPrompt } from "./llm/prompts.ts";
-import { buildToolParameters } from "./schema.ts";
+import { buildColumnMappingSystemPrompt, buildSystemPrompt } from "./llm/prompts.ts";
+import { buildColumnMappingToolParameters, buildToolParameters } from "./schema.ts";
 import { LLMClient, LLMError } from "./llm/LLMClient.ts";
 import { formatForLLM } from "./utils/contentFormatter.ts";
+import type { ColumnMapping, ColumnTarget, LLMColumnMappingResponse } from "./mapping/types.ts";
+import { applyColumnMapping } from "./mapping/applyMapping.ts";
 import { coerceValue } from "./utils/typeCoercion.ts";
-import type { SchemaField } from "./types.ts";
 
 const DEFAULT_LLM_TIMEOUT_MS = 300_000;
 
@@ -45,14 +46,23 @@ export class DocumentProcessor {
         const parser = getParser(resolvedFormat, documentBytes, input.filename);
         const rawContent: RawContent = await parser.parse(documentBytes);
 
-        const sourceType = resolvedFormat;
-        let totalRowsFound = 0;
-
         if (rawContent.type === "tabular") {
-            totalRowsFound = (rawContent.data as TabularData).totalRows;
+            return this.processTabular<T>(
+                rawContent.data as TabularData,
+                resolvedFormat,
+                startTime,
+            );
         }
 
-        if (totalRowsFound === 0 && rawContent.type === "tabular") {
+        return this.processText<T>(rawContent, resolvedFormat, startTime);
+    }
+
+    private async processTabular<T extends Record<string, unknown>>(
+        data: TabularData,
+        sourceType: string,
+        startTime: number,
+    ): Promise<ProcessResult<T>> {
+        if (data.totalRows === 0) {
             return {
                 items: [] as T[],
                 missingFields: [],
@@ -66,6 +76,63 @@ export class DocumentProcessor {
             };
         }
 
+        const formattedContent = formatForLLM({ type: "tabular", data });
+        const systemPrompt = buildColumnMappingSystemPrompt(this.schema, this.locale);
+        const toolParameters = buildColumnMappingToolParameters();
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+        let llmResult: LLMColumnMappingResponse;
+        let tokensUsed = 0;
+
+        try {
+            const response = await this.llmClient.analyzeColumns(
+                systemPrompt,
+                formattedContent,
+                toolParameters,
+                controller.signal,
+            );
+            llmResult = response.result;
+            tokensUsed = response.tokensUsed;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error instanceof LLMError) throw error;
+            if (error instanceof DOMException && error.name === "AbortError") {
+                throw new LLMError("LLM request timed out", 408);
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        const columnMapping = this.buildColumnMapping(llmResult.column_mapping);
+
+        const extractResult = applyColumnMapping(data, columnMapping, this.schema);
+
+        const warnings = this.buildWarnings(llmResult, extractResult);
+
+        const meta: ProcessMeta = {
+            sourceType,
+            totalRowsFound: data.totalRows,
+            itemsExtracted: extractResult.items.length,
+            llmTokensUsed: tokensUsed,
+            processingTimeMs: Date.now() - startTime,
+        };
+
+        return {
+            items: extractResult.items as T[],
+            missingFields: extractResult.missingFields,
+            warnings,
+            meta,
+        };
+    }
+
+    private async processText<T extends Record<string, unknown>>(
+        rawContent: RawContent,
+        sourceType: string,
+        startTime: number,
+    ): Promise<ProcessResult<T>> {
         const formattedContent = formatForLLM(rawContent);
         const systemPrompt = buildSystemPrompt(this.schema, this.locale);
         const toolParameters = buildToolParameters(this.schema);
@@ -106,7 +173,7 @@ export class DocumentProcessor {
 
         const meta: ProcessMeta = {
             sourceType,
-            totalRowsFound,
+            totalRowsFound: 0,
             itemsExtracted: processedItems.length,
             llmTokensUsed: tokensUsed,
             processingTimeMs: Date.now() - startTime,
@@ -118,6 +185,60 @@ export class DocumentProcessor {
             warnings: processedWarnings,
             meta,
         };
+    }
+
+    private buildColumnMapping(
+        llmMapping: LLMColumnMappingResponse["column_mapping"],
+    ): ColumnMapping {
+        const columns: Record<string, ColumnTarget> = {};
+
+        for (const [colName, colDef] of Object.entries(llmMapping)) {
+            if (colDef.target === null || colDef.target === undefined) {
+                columns[colName] = { type: "ignore" };
+                continue;
+            }
+
+            if (typeof colDef.target === "string") {
+                columns[colName] = { type: "field", field: colDef.target };
+                continue;
+            }
+
+            if (typeof colDef.target === "object" && "channel_name" in colDef.target) {
+                columns[colName] = {
+                    type: "price_channel",
+                    channel_name: colDef.target.channel_name,
+                    channel_id: colDef.target.channel_id ?? undefined,
+                };
+                continue;
+            }
+
+            columns[colName] = { type: "ignore" };
+        }
+
+        return {
+            columns,
+            header_row: 0,
+        };
+    }
+
+    private buildWarnings(
+        llmResult: LLMColumnMappingResponse,
+        extractResult: { warnings: Array<Warning> },
+    ): Warning[] {
+        const warnings: Warning[] = [];
+
+        for (const w of llmResult.warnings ?? []) {
+            warnings.push({
+                type: "low_confidence",
+                field: w.field,
+                itemIndex: -1,
+                message: w.message,
+            });
+        }
+
+        warnings.push(...extractResult.warnings);
+
+        return warnings;
     }
 
     private resolveDocument(input: DocumentInput): Uint8Array {
@@ -176,7 +297,7 @@ export class DocumentProcessor {
         });
     }
 
-    private coerceField(field: SchemaField, value: unknown): unknown {
+    private coerceField(field: import("./types.ts").SchemaField, value: unknown): unknown {
         if (field.type === "array") {
             if (Array.isArray(value)) {
                 return value.map((item) => this.coerceNestedItem(field.items?.fields ?? [], item));
@@ -205,7 +326,7 @@ export class DocumentProcessor {
     }
 
     private coerceNestedItem(
-        fields: SchemaField[],
+        fields: import("./types.ts").SchemaField[],
         item: Record<string, unknown>,
     ): Record<string, unknown> {
         const result: Record<string, unknown> = {};

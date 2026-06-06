@@ -112,6 +112,59 @@ export function buildToolParameters(schema: TargetSchema): Record<string, unknow
     };
 }
 
+export function buildColumnMappingToolParameters(): Record<string, unknown> {
+    return {
+        type: "object",
+        properties: {
+            column_mapping: {
+                type: "object",
+                description:
+                    "Mapeo de nombre de columna a su target. La key es el nombre exacto de la columna. El value es { target: field_name } para campos simples, { target: { channel_name, channel_id } } para canales de precio, o { target: null } para columnas ignoradas.",
+                additionalProperties: {
+                    type: "object",
+                    properties: {
+                        target: {
+                            description:
+                                "Nombre del campo destino, objeto de canal de precio, o null",
+                        },
+                    },
+                    required: ["target"],
+                },
+            },
+            header_row: {
+                type: "integer",
+                description: "Índice (0-indexado) de la fila donde empiezan los encabezados reales",
+            },
+            missing_fields: {
+                type: "array",
+                items: {
+                    type: "object",
+                    properties: {
+                        field: { type: "string" },
+                        reason: { type: "string" },
+                    },
+                    required: ["field", "reason"],
+                    additionalProperties: false,
+                },
+            },
+            warnings: {
+                type: "array",
+                items: {
+                    type: "object",
+                    properties: {
+                        field: { type: "string" },
+                        message: { type: "string" },
+                    },
+                    required: ["field", "message"],
+                    additionalProperties: false,
+                },
+            },
+        },
+        required: ["column_mapping", "header_row", "missing_fields", "warnings"],
+        additionalProperties: false,
+    };
+}
+
 export function getRequiredFields(schema: TargetSchema): string[] {
     return schema.fields
         .filter((f) => f.required)

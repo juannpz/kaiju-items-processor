@@ -1,6 +1,7 @@
 import type { LLMConfig } from "../types.ts";
 import type { LLMRequestConfig, LLMToolCallResponse } from "./types.ts";
 import { DEFAULT_LLM_CONFIG } from "./types.ts";
+import type { LLMColumnMappingResponse } from "../mapping/types.ts";
 
 export class LLMClient {
     private config: LLMRequestConfig;
@@ -15,12 +16,37 @@ export class LLMClient {
         };
     }
 
-    async extract(
+    extract(
         systemPrompt: string,
         content: string,
         toolParameters: Record<string, unknown>,
         signal?: AbortSignal,
     ): Promise<{ result: LLMToolCallResponse; tokensUsed: number }> {
+        return this.sendToolRequest("extract_items", systemPrompt, content, toolParameters, signal);
+    }
+
+    analyzeColumns(
+        systemPrompt: string,
+        content: string,
+        toolParameters: Record<string, unknown>,
+        signal?: AbortSignal,
+    ): Promise<{ result: LLMColumnMappingResponse; tokensUsed: number }> {
+        return this.sendToolRequest(
+            "analyze_columns",
+            systemPrompt,
+            content,
+            toolParameters,
+            signal,
+        );
+    }
+
+    private async sendToolRequest<T>(
+        toolName: string,
+        systemPrompt: string,
+        content: string,
+        toolParameters: Record<string, unknown>,
+        signal?: AbortSignal,
+    ): Promise<{ result: T; tokensUsed: number }> {
         const requestBody = {
             model: this.config.model,
             messages: [
@@ -31,9 +57,10 @@ export class LLMClient {
                 {
                     type: "function" as const,
                     function: {
-                        name: "extract_items",
-                        description:
-                            "Extrae los items de inventario del contenido del documento analizado",
+                        name: toolName,
+                        description: toolName === "extract_items"
+                            ? "Extrae los items de inventario del contenido del documento analizado"
+                            : "Analiza las columnas del documento y devuelve el mapeo a campos del esquema",
                         parameters: toolParameters,
                     },
                 },
@@ -84,17 +111,17 @@ export class LLMClient {
             );
         }
 
-        if (toolCall.function.name !== "extract_items") {
+        if (toolCall.function.name !== toolName) {
             throw new LLMError(
-                `Unexpected tool call: ${toolCall.function.name}`,
+                `Unexpected tool call: ${toolCall.function.name}, expected: ${toolName}`,
                 0,
             );
         }
 
-        let parsed: LLMToolCallResponse;
+        let parsed: T;
         try {
             parsed = JSON.parse(toolCall.function.arguments);
-        } catch (parseError) {
+        } catch (_parseError) {
             const raw = toolCall.function.arguments;
             const preview = raw.slice(0, 500);
             const endsIncomplete = raw.length > 0 && !raw.endsWith("}") && !raw.endsWith("]");

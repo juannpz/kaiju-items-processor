@@ -20,3 +20,10 @@ export type {
     Warning,
     WarningType,
 } from "./types.ts";
+
+export type {
+    ApplyMappingResult,
+    ColumnMapping,
+    ColumnTarget,
+    LLMColumnMappingResponse,
+} from "./mapping/types.ts";

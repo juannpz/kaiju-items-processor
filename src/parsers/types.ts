@@ -2,6 +2,7 @@ export interface TabularData {
     headers: string[];
     rows: Record<string, unknown>[];
     totalRows: number;
+    sheetName?: string;
 }
 
 export interface RawContent {
