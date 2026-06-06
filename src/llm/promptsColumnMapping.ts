@@ -6,9 +6,7 @@ export function buildColumnMappingSystemPrompt(
     locale?: string,
 ): string {
     const lang = locale?.startsWith("es") ? "es" : "en";
-    return lang === "es"
-        ? buildSpanishColumnPrompt(schema)
-        : buildEnglishColumnPrompt(schema);
+    return lang === "es" ? buildSpanishColumnPrompt(schema) : buildEnglishColumnPrompt(schema);
 }
 
 function buildFieldDescriptions(schema: TargetSchema): string {
