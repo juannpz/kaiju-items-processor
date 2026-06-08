@@ -33,26 +33,26 @@ export class ExcelParser implements Parser {
             const sheetName = workbook.SheetNames[s];
             const sheet = workbook.Sheets[sheetName];
 
-            const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
-            const colCount = range.e.c - range.s.c + 1;
-
             const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
                 header: 1,
-                defval: null,
             });
 
             if (rawRows.length === 0) continue;
 
-            const nonEmptyColIndices = findNonEmptyColumns(
-                rawRows,
-                colCount ?? rawRows[0]?.length ?? 0,
+            const colCount = rawRows.reduce(
+                (max, row) => Math.max(max, row?.length ?? 0),
+                0,
             );
+
+            if (colCount === 0) continue;
+
+            const nonEmptyColIndices = findNonEmptyColumns(rawRows, colCount);
 
             if (nonEmptyColIndices.length === 0) continue;
 
             const filledRows = rawRows.filter((row) => {
                 const nonEmpty = nonEmptyColIndices.filter((c) => {
-                    const val = row[c];
+                    const val = row?.[c];
                     return val != null && String(val).trim() !== "";
                 }).length;
                 return nonEmpty >= 2;
