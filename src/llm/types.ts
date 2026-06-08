@@ -19,11 +19,13 @@ export interface LLMRequestConfig {
     apiKey: string;
     maxTokens: number;
     temperature: number;
+    stream: boolean;
 }
 
 export const DEFAULT_LLM_CONFIG: Partial<LLMRequestConfig> = {
     model: "deepseek-v4-pro",
     baseUrl: "https://api.deepseek.com",
-    maxTokens: 128000,
+    maxTokens: 32000,
     temperature: 0.1,
+    stream: true,
 };

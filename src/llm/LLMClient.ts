@@ -13,6 +13,7 @@ export class LLMClient {
             apiKey: config.apiKey,
             maxTokens: config.maxTokens ?? DEFAULT_LLM_CONFIG.maxTokens!,
             temperature: config.temperature ?? DEFAULT_LLM_CONFIG.temperature!,
+            stream: config.stream ?? DEFAULT_LLM_CONFIG.stream!,
         };
     }
 
@@ -70,13 +71,19 @@ export class LLMClient {
             max_tokens: this.config.maxTokens,
         };
 
+        const useStream = this.config.stream;
+
+        const fetchBody = useStream
+            ? { ...requestBody, stream: true, stream_options: { include_usage: true } }
+            : requestBody;
+
         const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${this.config.apiKey}`,
             },
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify(fetchBody),
             signal,
         });
 
@@ -86,6 +93,10 @@ export class LLMClient {
                 `LLM API request failed with status ${response.status}: ${errorBody}`,
                 response.status,
             );
+        }
+
+        if (useStream && response.body) {
+            return this.parseStreamResponse<T>(toolName, response.body);
         }
 
         const data = await response.json() as LLMApiResponse;
@@ -129,6 +140,112 @@ export class LLMClient {
             const message = endsIncomplete
                 ? `LLM response truncated (${raw.length} chars). Increase max_tokens. Preview: ${preview}...`
                 : `Failed to parse LLM tool call arguments: ${preview}`;
+
+            throw new LLMError(message, 0);
+        }
+
+        return { result: parsed, tokensUsed };
+    }
+
+    private async parseStreamResponse<T>(
+        toolName: string,
+        body: ReadableStream<Uint8Array>,
+    ): Promise<{ result: T; tokensUsed: number }> {
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = "";
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (value) {
+                    fullText += decoder.decode(value, { stream: !done });
+                }
+                if (done) break;
+            }
+        } finally {
+            try {
+                reader.releaseLock();
+            } catch {
+                // lock already released
+            }
+        }
+
+        let toolCallName = "";
+        let accumulatedArgs = "";
+        let finishReason = "";
+        let tokensUsed = 0;
+
+        const lines = fullText.split("\n");
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+            const data = trimmed.slice(6);
+            if (data === "[DONE]") continue;
+
+            try {
+                const parsed = JSON.parse(data);
+
+                if (parsed.choices?.[0]?.finish_reason) {
+                    finishReason = parsed.choices[0].finish_reason;
+                }
+
+                if (parsed.usage?.total_tokens) {
+                    tokensUsed = parsed.usage.total_tokens;
+                }
+
+                const delta = parsed.choices?.[0]?.delta;
+                const toolCalls = delta?.tool_calls;
+
+                if (toolCalls?.length) {
+                    const func = toolCalls[0]?.function;
+                    if (func?.name) {
+                        toolCallName = func.name;
+                    }
+                    if (func?.arguments) {
+                        accumulatedArgs += func.arguments;
+                    }
+                }
+            } catch {
+                // skip malformed chunks
+            }
+        }
+
+        if (finishReason === "length") {
+            throw new LLMError(
+                "LLM streaming response truncated due to max_tokens limit. Increase max_tokens in LLMConfig.",
+                0,
+            );
+        }
+
+        if (toolCallName && toolCallName !== toolName) {
+            throw new LLMError(
+                `Unexpected tool call: ${toolCallName}, expected: ${toolName}`,
+                0,
+            );
+        }
+
+        if (!accumulatedArgs) {
+            throw new LLMError(
+                "LLM did not return any tool call arguments in streaming response.",
+                0,
+            );
+        }
+
+        let parsed: T;
+        try {
+            parsed = JSON.parse(accumulatedArgs);
+        } catch (_parseError) {
+            const preview = accumulatedArgs.slice(0, 500);
+            const endsIncomplete = accumulatedArgs.length > 0 &&
+                !accumulatedArgs.endsWith("}") &&
+                !accumulatedArgs.endsWith("]");
+
+            const message = endsIncomplete
+                ? `LLM streaming response truncated (${accumulatedArgs.length} chars). Increase max_tokens. Preview: ${preview}...`
+                : `Failed to parse LLM streaming tool call arguments: ${preview}`;
 
             throw new LLMError(message, 0);
         }

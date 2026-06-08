@@ -33,6 +33,7 @@ export interface LLMConfig {
     baseUrl?: string;
     maxTokens?: number;
     temperature?: number;
+    stream?: boolean;
 }
 
 export interface ProcessorConfig {
