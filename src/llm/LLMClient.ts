@@ -48,7 +48,9 @@ export class LLMClient {
         toolParameters: Record<string, unknown>,
         signal?: AbortSignal,
     ): Promise<{ result: T; tokensUsed: number }> {
-        const requestBody = {
+        const useStream = this.config.stream;
+
+        const baseBody = {
             model: this.config.model,
             messages: [
                 { role: "system" as const, content: systemPrompt },
@@ -66,16 +68,13 @@ export class LLMClient {
                     },
                 },
             ],
-            thinking: { type: "disabled" },
             temperature: this.config.temperature,
             max_tokens: this.config.maxTokens,
         };
 
-        const useStream = this.config.stream;
-
         const fetchBody = useStream
-            ? { ...requestBody, stream: true, stream_options: { include_usage: true } }
-            : requestBody;
+            ? { ...baseBody, stream: true, stream_options: { include_usage: true } }
+            : { ...baseBody, thinking: { type: "disabled" as const } };
 
         const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
             method: "POST",
@@ -96,7 +95,47 @@ export class LLMClient {
         }
 
         if (useStream && response.body) {
-            return this.parseStreamResponse<T>(toolName, response.body);
+            try {
+                return await this.parseStreamResponse<T>(toolName, response.body);
+            } catch (streamError) {
+                if (
+                    streamError instanceof LLMError &&
+                    streamError.message.includes("did not return any tool call")
+                ) {
+                    return await this.sendNonStreamRequest<T>(
+                        toolName,
+                        baseBody,
+                        signal,
+                    );
+                }
+                throw streamError;
+            }
+        }
+
+        return await this.sendNonStreamRequest<T>(toolName, baseBody, signal);
+    }
+
+    private async sendNonStreamRequest<T>(
+        toolName: string,
+        baseBody: Record<string, unknown>,
+        signal?: AbortSignal,
+    ): Promise<{ result: T; tokensUsed: number }> {
+        const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${this.config.apiKey}`,
+            },
+            body: JSON.stringify({ ...baseBody, thinking: { type: "disabled" as const } }),
+            signal,
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text().catch(() => "Unknown error");
+            throw new LLMError(
+                `LLM API request failed with status ${response.status}: ${errorBody}`,
+                response.status,
+            );
         }
 
         const data = await response.json() as LLMApiResponse;
