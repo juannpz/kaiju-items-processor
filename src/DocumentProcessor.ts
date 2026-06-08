@@ -50,7 +50,7 @@ export class DocumentProcessor {
             const data = rawContent.data;
 
             if (Array.isArray(data)) {
-                return this.processMultiSheet<T>(data, resolvedFormat, startTime);
+                return this.processMultiSheet<T>(data, resolvedFormat, startTime, input.sheets);
             }
 
             return this.processSingleSheet<T>(data as TabularData, resolvedFormat, startTime);
@@ -63,7 +63,11 @@ export class DocumentProcessor {
         sheets: TabularData[],
         sourceType: string,
         startTime: number,
+        sheetFilter?: string[],
     ): Promise<ProcessResult<T>> {
+        const filtered = sheetFilter && sheetFilter.length > 0
+            ? sheets.filter((s) => sheetFilter.includes(s.sheetName ?? ""))
+            : sheets;
         const allItems: Record<string, unknown>[] = [];
         const allWarnings: Warning[] = [];
         const allMissingFields: Array<{ field: string; reason: string; affectedItems: number }> =
@@ -71,7 +75,7 @@ export class DocumentProcessor {
         let totalRowsFound = 0;
         let totalTokensUsed = 0;
 
-        for (const sheet of sheets) {
+        for (const sheet of filtered) {
             const sheetResult = await this.processSingleSheetRaw(
                 sheet,
             );

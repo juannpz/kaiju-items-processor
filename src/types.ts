@@ -25,6 +25,7 @@ export interface ProcessInput {
     document: DocumentInput;
     format?: DocumentFormat | "auto";
     filename?: string;
+    sheets?: string[];
 }
 
 export interface LLMConfig {
