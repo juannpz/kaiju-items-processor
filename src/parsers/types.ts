@@ -7,7 +7,7 @@ export interface TabularData {
 
 export interface RawContent {
     type: "tabular" | "text";
-    data: TabularData | string;
+    data: TabularData | TabularData[] | string;
 }
 
 export interface Parser {

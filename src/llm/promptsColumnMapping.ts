@@ -43,14 +43,14 @@ REGLAS DE MAPEO:
 
 1. Analizá tanto el NOMBRE de la columna como los VALORES de muestra.
    Ejemplos reales que aparecen en planillas de proveedores argentinos:
-   - "COD", "Código", "SKU", "CODIGO INTERNO", "Codigo EAN" → \`barcode\`
-   - "PRODUCTO", "Item", "Descripción del Artículo", "Denominación" → \`name\`
-   - "DESCRIPCION ADICIONAL" → \`suffix:name\` (se anexa al nombre, ej: "Bulón M6" + "x 20mm" → "Bulón M6 x 20mm")
-   - "FAMILIA", "Grupo", "Categoría", "Rubro" → \`category_id\`
-   - "MARCA", "Fabricante" → \`supplier_id\`
-   - "Unidad de Medida", "Unidad de Medida (UM)", "UM", "Unidad" → \`unit_of_measure\`
-   - "Stock", "Cantidad", "Existencia", "UNIDAD CAJA GRANEL" → \`current_stock\`
-   - "IVA", "Alíc. IVA", "IVA %" → \`arca_iva_aliquot_id\`
+   - "COD", "Código", "SKU", "CODIGO INTERNO", "Codigo EAN", "CSP" → \`barcode\`
+   - "PRODUCTO", "Item", "Descripción", "Descripción del Artículo", "Denominación" → \`name\`
+   - "DESCRIPCION ADICIONAL", "Medida", "Variante" → \`suffix:name\` (se anexa al nombre, ej: "Bulón M6" + "x 20mm" → "Bulón M6 x 20mm")
+   - "FAMILIA", "Grupo", "Categoría", "Rubro", "Categoria" → \`category_id\`
+   - "MARCA", "Fabricante", "Proveedor" → \`supplier_id\`
+   - "Unidad de Medida", "Unidad de Medida (UM)", "UM", "Unidad", "UM x Unidad" → \`unit_of_measure\`
+   - "Stock", "Cantidad", "Existencia", "UNIDAD CAJA GRANEL", "Unidades" → \`current_stock\`
+   - "IVA", "Alíc. IVA", "IVA %", "Neto+IVA/Un" → \`arca_iva_aliquot_id\`
 
 2. Columnas con nombre genérico como "col_0", "col_6":
    El parser les puso ese nombre porque el encabezado original estaba vacío.
@@ -70,10 +70,13 @@ REGLAS DE MAPEO:
      "PVP Premium"   → { "target": { "channel_name": "PVP Premium", "channel_id": "pvp_premium" } }
      "Precio de Lista" → { "target": { "channel_name": "Lista", "channel_id": "lista" } }
    Si hay UNA sola columna de precio, usá channel_name: "Lista".
+   Nombres de canales comunes en Argentina: "Lista", "PVP", "Neto", "Venta", "Mayorista", "Premium", "Contado", "Oferta".
+   IMPORTANTE: si ves la columna "Neto+IVA/Un" NO es un precio de canal — es info de IVA.
+   Las columnas con "%" o "Bonif" o "Dto" o "Desc" NO son precios — son descuentos/bonificaciones.
 
 5. CATEGORÍA vs MARCA:
-   - Agrupa TIPOS de productos ("HERRAMIENTAS", "BULONERÍA", "Automotor") → \`category_id\`
-   - Identifica el FABRICANTE ("BREMEN", "CORDOBABULONES", "TorniFast") → \`supplier_id\`
+   - Agrupa TIPOS de productos ("HERRAMIENTAS", "BULONERÍA", "Automotor", "INSUMOS", "JARDIN", "FERRETERIA") → \`category_id\`
+   - Identifica el FABRICANTE ("BREMEN", "CORDOBABULONES", "TorniFast", "WEMBLEY", "TOLSEN") → \`supplier_id\`
    Si la planilla tiene ambas columnas (ej: "Categoría" + "Marca"), mapeá cada una a su campo.
 
 6. IVA:
@@ -85,16 +88,27 @@ REGLAS DE MAPEO:
 7. STOCK:
    Si hay múltiples columnas de cantidad (ej: "UNIDAD CAJA GRANEL" y "UNIDAD CAJA FRACCION"),
    elegí la que mejor represente el stock total (generalmente la de valores más altos).
+   IMPORTANTE: si TODAS las filas de muestra tienen valor 1 en una columna de cantidad,
+   probablemente sea "cantidad por pack" o "unidades por caja", NO stock real.
+   Marcá esas columnas como ignoradas y reportalo en warnings.
 
 8. \`item_type_id\` es obligatorio en el esquema pero NUNCA aparece en planillas de proveedor.
    Es esperable que figure en missing_fields. No intentes inferirlo de otras columnas.
 
 9. Identificá la FILA donde empiezan los encabezados reales (0-indexado).
-   Las filas anteriores (títulos, fechas, logos, "Lista de Precios", etc.) ignorarlas.
+   Las filas anteriores (títulos, fechas, logos, "Lista de Precios", filas con datos de descuento/bonificación, etc.) ignorarlas.
    No cuentan como filas de datos.
 
 10. En \`missing_fields\`, listá solo los OBLIGATORIOS sin columna asignada.
-    En \`warnings\`, reportá columnas ambiguas o con valores que no calzan con el tipo esperado.
+    En \`warnings\`, reportá columnas ambiguas, columnas con valores que no calzan con el tipo esperado,
+    y columnas de cantidad que parecen ser pack/caja en vez de stock real.
+
+11. Las muestras vienen de DISTINTAS secciones del archivo (inicio, medio, final).
+    Si ves que ciertas columnas solo tienen datos en algunas filas, no te preocupes —
+    el mapeo se aplica a todas las filas. Columnas sin datos en una fila simplemente quedan vacías.
+
+12. ANALIZÁ EL PORCENTAJE DE RELLENO de cada columna que se reporta al final.
+    Columnas con muy bajo porcentaje (<5%) probablemente son ruido o datos excepcionales — considerá ignorarlas.
 
 Usá SIEMPRE la función \`analyze_columns\` para devolver los resultados.`;
 }

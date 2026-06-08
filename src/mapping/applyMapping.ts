@@ -92,6 +92,8 @@ export function applyColumnMapping(
 
         if (Object.keys(item).length === 0 && priceEntries.length === 0) continue;
 
+        if (!hasIdentityFields(item) && priceEntries.length > 0) continue;
+
         items.push(item);
     }
 
@@ -124,31 +126,58 @@ function coerceCell(value: unknown, field: SchemaField): unknown {
 }
 
 function isBannerRow(row: Record<string, unknown>, _headers: string[]): boolean {
-    const nonEmptyCount = Object.values(row).filter(
-        (v) => v !== null && v !== undefined && String(v).trim() !== "",
-    ).length;
+    const values = Object.values(row).map((v) => {
+        const s = String(v ?? "").trim();
+        return s.length > 0 ? s : null;
+    }).filter((v): v is string => v !== null);
 
-    if (nonEmptyCount <= 1) return true;
+    if (values.length <= 1) return true;
 
-    const values = Object.values(row).map((v) => String(v ?? "").toLowerCase().trim());
+    const fullText = values.join(" ").toLowerCase();
 
-    const bannerPatterns = [
-        /^marca:/,
-        /^rubro:/,
-        /^familia:/,
-        /^categoria:/,
-        /^seccion:/,
-        /^listado de/i,
-        /^lista de/i,
+    const sectionPatterns = [
+        "marca:",
+        "marca ",
+        "rubro:",
+        "rubro ",
+        "familia:",
+        "familia ",
+        "categoria:",
+        "categoría:",
+        "categoria ",
+        "seccion:",
+        "sección:",
+        "seccion ",
+        "proveedor:",
+        "proveedor ",
+        "listado de",
+        "lista de",
+        "lista:",
     ];
 
-    const fullText = values.filter((v) => v.length > 0).join(" ");
+    for (const pattern of sectionPatterns) {
+        if (fullText.includes(pattern)) return true;
+    }
 
-    for (const pattern of bannerPatterns) {
-        if (pattern.test(fullText)) return true;
+    for (const v of values) {
+        const lower = v.toLowerCase();
+        if (/^(descuento|bonificaci[oó]n|margen|recargo|dto|bonif|bon)\b/.test(lower)) {
+            return true;
+        }
+        if (/^[-=_]{3,}$/.test(v)) return true;
+        if (/^(total|subtotal|sub total|suma)\b/.test(lower) && values.length <= 3) {
+            return true;
+        }
     }
 
     return false;
+}
+
+function hasIdentityFields(item: Record<string, unknown>): boolean {
+    const identityFields = ["name", "barcode", "category_id", "supplier_id"];
+    return identityFields.some(
+        (f) => item[f] !== undefined && item[f] !== null && String(item[f]).trim() !== "",
+    );
 }
 
 function slugify(text: string): string {

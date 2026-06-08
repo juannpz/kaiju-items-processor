@@ -27,11 +27,15 @@ export class ExcelParser implements Parser {
             };
         }
 
-        const allSheetsData: MultiSheetTabularData[] = [];
+        const allSheetsData: TabularData[] = [];
 
         for (let s = 0; s < workbook.SheetNames.length; s++) {
             const sheetName = workbook.SheetNames[s];
             const sheet = workbook.Sheets[sheetName];
+
+            const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
+            const colCount = range.e.c - range.s.c + 1;
+
             const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
                 header: 1,
                 defval: null,
@@ -39,39 +43,54 @@ export class ExcelParser implements Parser {
 
             if (rawRows.length === 0) continue;
 
+            const nonEmptyColIndices = findNonEmptyColumns(
+                rawRows,
+                colCount ?? rawRows[0]?.length ?? 0,
+            );
+
+            if (nonEmptyColIndices.length === 0) continue;
+
             const filledRows = rawRows.filter((row) => {
-                const nonEmpty = row.filter(
-                    (c) => c != null && String(c).trim() !== "",
-                ).length;
+                const nonEmpty = nonEmptyColIndices.filter((c) => {
+                    const val = row[c];
+                    return val != null && String(val).trim() !== "";
+                }).length;
                 return nonEmpty >= 2;
             });
 
             if (filledRows.length < 2) continue;
 
-            const headerRow = options?.headerRow ?? detectHeaderRow(rawRows);
+            const headerRow = options?.headerRow ?? detectHeaderRow(rawRows, nonEmptyColIndices);
 
-            const headers = (rawRows[headerRow] as unknown[] ?? [])
-                .map((h, idx) => {
-                    if (h != null && String(h).trim() !== "") return String(h).trim();
-                    return `col_${idx}`;
-                });
+            const headers = nonEmptyColIndices.map((colIdx) => {
+                const h = (rawRows[headerRow] as unknown[])?.[colIdx];
+                if (h != null && String(h).trim() !== "") return String(h).trim();
+                return `col_${colIdx}`;
+            });
 
             const dataRowsStart = headerRow + 1;
             const dataRows: Record<string, unknown>[] = [];
 
             for (let i = dataRowsStart; i < rawRows.length; i++) {
                 const row = rawRows[i] as unknown[];
-                if (!row || row.every((cell) => cell == null || String(cell).trim() === "")) {
+                if (
+                    !row || nonEmptyColIndices.every((c) => {
+                        const val = row[c];
+                        return val == null || String(val).trim() === "";
+                    })
+                ) {
                     continue;
                 }
 
                 const rowObj: Record<string, unknown> = {};
-                for (let j = 0; j < headers.length; j++) {
-                    const value = row[j];
-                    rowObj[headers[j]] = value ?? null;
+                for (let j = 0; j < nonEmptyColIndices.length; j++) {
+                    const colIdx = nonEmptyColIndices[j];
+                    rowObj[headers[j]] = row[colIdx] ?? null;
                 }
                 dataRows.push(rowObj);
             }
+
+            if (dataRows.length === 0) continue;
 
             allSheetsData.push({
                 sheetName,
@@ -88,17 +107,32 @@ export class ExcelParser implements Parser {
             };
         }
 
-        const firstSheet = allSheetsData[0];
-
         if (allSheetsData.length === 1) {
-            return { type: "tabular", data: { ...firstSheet, sheetName: firstSheet.sheetName } };
+            return { type: "tabular", data: allSheetsData[0] };
         }
 
-        return { type: "tabular", data: mergeSheets(allSheetsData, allSheetsData[0]) };
+        return { type: "tabular", data: allSheetsData };
     }
 }
 
-function detectHeaderRow(rawRows: unknown[][]): number {
+function findNonEmptyColumns(rawRows: unknown[][], colCount: number): number[] {
+    const nonEmpty: number[] = [];
+
+    for (let col = 0; col < colCount; col++) {
+        const hasData = rawRows.some((row) => {
+            const val = row[col];
+            return val !== null && val !== undefined && String(val).trim() !== "";
+        });
+
+        if (hasData) {
+            nonEmpty.push(col);
+        }
+    }
+
+    return nonEmpty;
+}
+
+function detectHeaderRow(rawRows: unknown[][], nonEmptyColIndices: number[]): number {
     let bestIdx = 0;
     let bestScore = 0;
 
@@ -107,10 +141,19 @@ function detectHeaderRow(rawRows: unknown[][]): number {
     for (let i = 0; i < maxRows; i++) {
         const row = rawRows[i];
         if (!row) continue;
-        const nonEmpty = row.filter((c) => c != null && String(c).trim() !== "").length;
-        const textCells = row.filter(
-            (c) => c != null && typeof c === "string" && c.trim().length > 0,
-        ).length;
+
+        let nonEmpty = 0;
+        let textCells = 0;
+
+        for (const col of nonEmptyColIndices) {
+            const c = row[col];
+            if (c != null && String(c).trim() !== "") {
+                nonEmpty++;
+                if (typeof c === "string" && c.trim().length > 0) {
+                    textCells++;
+                }
+            }
+        }
 
         const score = nonEmpty * 2 + textCells;
 
@@ -121,31 +164,6 @@ function detectHeaderRow(rawRows: unknown[][]): number {
     }
 
     return bestIdx;
-}
-
-function mergeSheets(
-    sheets: MultiSheetTabularData[],
-    primarySheet: MultiSheetTabularData,
-): TabularData {
-    const allRows: Record<string, unknown>[] = [];
-    const headers = primarySheet.headers;
-
-    for (const sheet of sheets) {
-        for (const row of sheet.rows) {
-            const merged: Record<string, unknown> = { _sheet: sheet.sheetName };
-            for (const h of headers) {
-                merged[h] = row[h] ?? null;
-            }
-            allRows.push(merged);
-        }
-    }
-
-    return {
-        headers,
-        rows: allRows,
-        totalRows: allRows.length,
-        sheetName: sheets.map((s) => s.sheetName).join(", "),
-    };
 }
 
 export class CsvParser implements Parser {
@@ -225,10 +243,6 @@ export class CsvParser implements Parser {
         result.push(current);
         return result;
     }
-}
-
-interface MultiSheetTabularData extends TabularData {
-    sheetName: string;
 }
 
 export class ParseError extends Error {

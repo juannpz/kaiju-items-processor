@@ -47,36 +47,120 @@ export class DocumentProcessor {
         const rawContent: RawContent = await parser.parse(documentBytes);
 
         if (rawContent.type === "tabular") {
-            return this.processTabular<T>(
-                rawContent.data as TabularData,
-                resolvedFormat,
-                startTime,
-            );
+            const data = rawContent.data;
+
+            if (Array.isArray(data)) {
+                return this.processMultiSheet<T>(data, resolvedFormat, startTime);
+            }
+
+            return this.processSingleSheet<T>(data as TabularData, resolvedFormat, startTime);
         }
 
         return this.processText<T>(rawContent, resolvedFormat, startTime);
     }
 
-    private async processTabular<T extends Record<string, unknown>>(
+    private async processMultiSheet<T extends Record<string, unknown>>(
+        sheets: TabularData[],
+        sourceType: string,
+        startTime: number,
+    ): Promise<ProcessResult<T>> {
+        const allItems: Record<string, unknown>[] = [];
+        const allWarnings: Warning[] = [];
+        const allMissingFields: Array<{ field: string; reason: string; affectedItems: number }> =
+            [];
+        let totalRowsFound = 0;
+        let totalTokensUsed = 0;
+
+        for (const sheet of sheets) {
+            const sheetResult = await this.processSingleSheetRaw(
+                sheet,
+            );
+
+            for (const item of sheetResult.items) {
+                item["_sheet"] = sheet.sheetName ?? "";
+            }
+
+            allItems.push(...sheetResult.items);
+            allWarnings.push(...sheetResult.warnings);
+            totalRowsFound += sheetResult.totalRowsFound;
+            totalTokensUsed += sheetResult.tokensUsed;
+
+            for (const mf of sheetResult.missingFields) {
+                allMissingFields.push(mf);
+            }
+        }
+
+        const mergedMissingFields = this.mergeMissingFields(allMissingFields, allItems.length);
+
+        const meta: ProcessMeta = {
+            sourceType,
+            totalRowsFound,
+            itemsExtracted: allItems.length,
+            llmTokensUsed: totalTokensUsed,
+            processingTimeMs: Date.now() - startTime,
+        };
+
+        return {
+            items: allItems as T[],
+            missingFields: mergedMissingFields,
+            warnings: allWarnings,
+            meta,
+        };
+    }
+
+    private async processSingleSheet<T extends Record<string, unknown>>(
         data: TabularData,
         sourceType: string,
         startTime: number,
     ): Promise<ProcessResult<T>> {
+        const raw = await this.processSingleSheetRaw(data);
+
+        const meta: ProcessMeta = {
+            sourceType,
+            totalRowsFound: raw.totalRowsFound,
+            itemsExtracted: raw.items.length,
+            llmTokensUsed: raw.tokensUsed,
+            processingTimeMs: Date.now() - startTime,
+        };
+
+        return {
+            items: raw.items as T[],
+            missingFields: raw.missingFields,
+            warnings: raw.warnings,
+            meta,
+        };
+    }
+
+    private async processSingleSheetRaw(
+        data: TabularData,
+    ): Promise<{
+        items: Record<string, unknown>[];
+        missingFields: Array<{ field: string; reason: string; affectedItems: number }>;
+        warnings: Warning[];
+        totalRowsFound: number;
+        tokensUsed: number;
+    }> {
         if (data.totalRows === 0) {
             return {
-                items: [] as T[],
+                items: [],
                 missingFields: [],
                 warnings: [],
-                meta: {
-                    sourceType,
-                    totalRowsFound: 0,
-                    itemsExtracted: 0,
-                    processingTimeMs: Date.now() - startTime,
-                },
+                totalRowsFound: 0,
+                tokensUsed: 0,
             };
         }
 
         const formattedContent = formatForLLM({ type: "tabular", data });
+        if (formattedContent === "El documento no contiene datos.") {
+            return {
+                items: [],
+                missingFields: [],
+                warnings: [],
+                totalRowsFound: 0,
+                tokensUsed: 0,
+            };
+        }
+
         const systemPrompt = buildColumnMappingSystemPrompt(this.schema, this.locale);
         const toolParameters = buildColumnMappingToolParameters();
 
@@ -112,20 +196,31 @@ export class DocumentProcessor {
 
         const warnings = this.buildWarnings(llmResult, extractResult);
 
-        const meta: ProcessMeta = {
-            sourceType,
-            totalRowsFound: data.totalRows,
-            itemsExtracted: extractResult.items.length,
-            llmTokensUsed: tokensUsed,
-            processingTimeMs: Date.now() - startTime,
-        };
-
         return {
-            items: extractResult.items as T[],
+            items: extractResult.items,
             missingFields: extractResult.missingFields,
             warnings,
-            meta,
+            totalRowsFound: data.totalRows,
+            tokensUsed,
         };
+    }
+
+    private mergeMissingFields(
+        missingFields: Array<{ field: string; reason: string; affectedItems: number }>,
+        totalItems: number,
+    ): Array<{ field: string; reason: string; affectedItems: number }> {
+        const merged = new Map<string, number>();
+
+        for (const mf of missingFields) {
+            const current = merged.get(mf.field) ?? 0;
+            merged.set(mf.field, current + mf.affectedItems);
+        }
+
+        return [...merged.entries()].map(([field, count]) => ({
+            field,
+            reason: `Missing from source data (${count} of ${totalItems} items)`,
+            affectedItems: count,
+        }));
     }
 
     private async processText<T extends Record<string, unknown>>(
