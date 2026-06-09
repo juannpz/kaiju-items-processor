@@ -6,6 +6,7 @@ export {
     LLMError,
     ParseError,
     PdfParseError,
+    PromptOptimizer,
     TrainingLogger,
 } from "./src/index.ts";
 

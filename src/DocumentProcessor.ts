@@ -16,7 +16,7 @@ import { formatForLLM } from "./utils/contentFormatter.ts";
 import type { ColumnMapping, ColumnTarget, LLMColumnMappingResponse } from "./mapping/types.ts";
 import { applyColumnMapping } from "./mapping/applyMapping.ts";
 import { coerceValue } from "./utils/typeCoercion.ts";
-import { ColumnMappingCache, TrainingLogger } from "./training/index.ts";
+import { ColumnMappingCache, PromptOptimizer, TrainingLogger } from "./training/index.ts";
 import type { TrainingLogEntry } from "./training/TrainingLogger.ts";
 
 const DEFAULT_LLM_TIMEOUT_MS = 300_000;
@@ -205,7 +205,16 @@ export class DocumentProcessor {
         }
 
         if (!llmResult) {
-            const systemPrompt = buildColumnMappingSystemPrompt(this.schema, this.locale);
+            let systemPrompt = buildColumnMappingSystemPrompt(this.schema, this.locale);
+
+            const optimizer = PromptOptimizer.getInstance();
+            if (optimizer) {
+                optimizer.loadLogs().catch(() => {});
+                const fewShot = optimizer.buildFewShotPrompt();
+                if (fewShot) {
+                    systemPrompt += fewShot;
+                }
+            }
             const toolParameters = buildColumnMappingToolParameters();
 
             const controller = new AbortController();

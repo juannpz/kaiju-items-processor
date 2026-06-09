@@ -4,7 +4,7 @@ export { LLMError } from "./llm/LLMClient.ts";
 export { ParseError } from "./parsers/ExcelParser.ts";
 export { PdfParseError } from "./parsers/PdfParser.ts";
 export { FormatDetectionError } from "./parsers/index.ts";
-export { ColumnMappingCache, TrainingLogger } from "./training/index.ts";
+export { ColumnMappingCache, PromptOptimizer, TrainingLogger } from "./training/index.ts";
 
 export type { TrainingLogEntry } from "./training/TrainingLogger.ts";
 

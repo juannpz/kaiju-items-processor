@@ -1,6 +1,6 @@
 {
     "name": "@juannpz/kaiju-items-processor",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "license": "MIT",
     "exports": "./mod.ts",
     "imports": {
@@ -8,7 +8,9 @@
     },
     "lint": {
         "rules": {
-            "tags": ["recommended"]
+            "tags": [
+                "recommended"
+            ]
         }
     },
     "fmt": {
@@ -23,6 +25,8 @@
             "LICENSE",
             "README.md"
         ],
-        "exclude": ["tests/"]
+        "exclude": [
+            "tests/"
+        ]
     }
 }
