@@ -1,10 +1,12 @@
 export {
+    ColumnMappingCache,
     defineSchema,
     DocumentProcessor,
     FormatDetectionError,
     LLMError,
     ParseError,
     PdfParseError,
+    TrainingLogger,
 } from "./src/index.ts";
 
 export type {
@@ -23,6 +25,7 @@ export type {
     SchemaField,
     SchemaFieldType,
     TargetSchema,
+    TrainingLogEntry,
     Warning,
     WarningType,
 } from "./src/index.ts";

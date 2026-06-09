@@ -16,6 +16,8 @@ import { formatForLLM } from "./utils/contentFormatter.ts";
 import type { ColumnMapping, ColumnTarget, LLMColumnMappingResponse } from "./mapping/types.ts";
 import { applyColumnMapping } from "./mapping/applyMapping.ts";
 import { coerceValue } from "./utils/typeCoercion.ts";
+import { ColumnMappingCache, TrainingLogger } from "./training/index.ts";
+import type { TrainingLogEntry } from "./training/TrainingLogger.ts";
 
 const DEFAULT_LLM_TIMEOUT_MS = 300_000;
 
@@ -53,7 +55,12 @@ export class DocumentProcessor {
                 return this.processMultiSheet<T>(data, resolvedFormat, startTime, input.sheets);
             }
 
-            return this.processSingleSheet<T>(data as TabularData, resolvedFormat, startTime);
+            return this.processSingleSheet<T>(
+                data as TabularData,
+                resolvedFormat,
+                startTime,
+                input,
+            );
         }
 
         return this.processText<T>(rawContent, resolvedFormat, startTime);
@@ -116,16 +123,34 @@ export class DocumentProcessor {
         data: TabularData,
         sourceType: string,
         startTime: number,
+        input?: ProcessInput,
     ): Promise<ProcessResult<T>> {
         const raw = await this.processSingleSheetRaw(data);
+
+        const processingTimeMs = Date.now() - startTime;
 
         const meta: ProcessMeta = {
             sourceType,
             totalRowsFound: raw.totalRowsFound,
             itemsExtracted: raw.items.length,
             llmTokensUsed: raw.tokensUsed,
-            processingTimeMs: Date.now() - startTime,
+            processingTimeMs,
         };
+
+        this.logTrainingEntry({
+            filename: input?.filename ?? data.sheetName ?? "",
+            format: sourceType,
+            sheetName: data.sheetName,
+            totalRows: data.totalRows,
+            headers: data.headers,
+            columnMapping: raw.llmResult ?? null,
+            itemsExtracted: raw.items.length,
+            missingFields: raw.missingFields,
+            warnings: raw.warnings,
+            tokensUsed: raw.tokensUsed,
+            processingTimeMs,
+            success: true,
+        });
 
         return {
             items: raw.items as T[],
@@ -143,6 +168,7 @@ export class DocumentProcessor {
         warnings: Warning[];
         totalRowsFound: number;
         tokensUsed: number;
+        llmResult?: LLMColumnMappingResponse;
     }> {
         if (data.totalRows === 0) {
             return {
@@ -165,33 +191,45 @@ export class DocumentProcessor {
             };
         }
 
-        const systemPrompt = buildColumnMappingSystemPrompt(this.schema, this.locale);
-        const toolParameters = buildColumnMappingToolParameters();
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-
-        let llmResult: LLMColumnMappingResponse;
+        const cache = ColumnMappingCache.getInstance();
+        let llmResult: LLMColumnMappingResponse | null = null;
         let tokensUsed = 0;
+        let fromCache = false;
 
-        try {
-            const response = await this.llmClient.analyzeColumns(
-                systemPrompt,
-                formattedContent,
-                toolParameters,
-                controller.signal,
-            );
-            llmResult = response.result;
-            tokensUsed = response.tokensUsed;
-        } catch (error) {
-            clearTimeout(timeoutId);
-            if (error instanceof LLMError) throw error;
-            if (error instanceof DOMException && error.name === "AbortError") {
-                throw new LLMError("LLM request timed out", 408);
+        if (cache) {
+            llmResult = await cache.get(data.headers, data.headers.slice(0, 5));
+            if (llmResult) {
+                tokensUsed = 0;
+                fromCache = true;
             }
-            throw error;
-        } finally {
-            clearTimeout(timeoutId);
+        }
+
+        if (!llmResult) {
+            const systemPrompt = buildColumnMappingSystemPrompt(this.schema, this.locale);
+            const toolParameters = buildColumnMappingToolParameters();
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+            try {
+                const response = await this.llmClient.analyzeColumns(
+                    systemPrompt,
+                    formattedContent,
+                    toolParameters,
+                    controller.signal,
+                );
+                llmResult = response.result;
+                tokensUsed = response.tokensUsed;
+            } catch (error) {
+                clearTimeout(timeoutId);
+                if (error instanceof LLMError) throw error;
+                if (error instanceof DOMException && error.name === "AbortError") {
+                    throw new LLMError("LLM request timed out", 408);
+                }
+                throw error;
+            } finally {
+                clearTimeout(timeoutId);
+            }
         }
 
         const columnMapping = this.buildColumnMapping(llmResult.column_mapping);
@@ -200,13 +238,96 @@ export class DocumentProcessor {
 
         const warnings = this.buildWarnings(llmResult, extractResult);
 
+        if (cache && !fromCache && llmResult) {
+            cache.set(
+                data.headers,
+                llmResult,
+                data.sheetName ?? "unknown",
+                data.totalRows,
+            ).catch(() => {});
+        }
+
         return {
             items: extractResult.items,
             missingFields: extractResult.missingFields,
             warnings,
             totalRowsFound: data.totalRows,
             tokensUsed,
+            llmResult,
         };
+    }
+
+    private logTrainingEntry({
+        filename,
+        format,
+        sheetName,
+        totalRows,
+        headers,
+        columnMapping,
+        itemsExtracted,
+        missingFields,
+        warnings,
+        tokensUsed,
+        processingTimeMs,
+        success,
+        errorMessage,
+    }: {
+        filename: string;
+        format: string;
+        sheetName?: string;
+        totalRows: number;
+        headers: string[];
+        columnMapping: LLMColumnMappingResponse | null;
+        itemsExtracted: number;
+        missingFields: Array<{ field: string; reason: string; affectedItems: number }>;
+        warnings: Warning[];
+        tokensUsed: number;
+        processingTimeMs: number;
+        success: boolean;
+        errorMessage?: string;
+    }): void {
+        const logger = TrainingLogger.getInstance();
+        if (!logger) return;
+
+        const sampleRows = headers.length > 0 && totalRows > 0
+            ? [{}] as Array<Record<string, unknown>>
+            : [];
+
+        const entry: TrainingLogEntry = {
+            version: "0.1.0",
+            timestamp: new Date().toISOString(),
+            filename,
+            format,
+            model: this.llmClient ? "unknown" : "unknown",
+            sheetName,
+            totalRows,
+            headers,
+            sampleRows,
+            schema: {
+                fields: this.schema.fields.map((f) => ({
+                    name: f.name,
+                    type: f.type,
+                    description: f.description ?? f.name,
+                    required: !!f.required,
+                })),
+            },
+            columnMapping: columnMapping?.column_mapping
+                ? (columnMapping.column_mapping as unknown as Record<string, unknown>)
+                : null,
+            itemsExtracted,
+            missingFields,
+            warnings: warnings.map((w) => ({
+                type: w.type,
+                field: w.field,
+                message: w.message,
+            })),
+            tokensUsed,
+            processingTimeMs,
+            success,
+            errorMessage,
+        };
+
+        logger.log(entry).catch(() => {});
     }
 
     private mergeMissingFields(

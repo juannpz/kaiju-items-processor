@@ -4,6 +4,16 @@ export { LLMError } from "./llm/LLMClient.ts";
 export { ParseError } from "./parsers/ExcelParser.ts";
 export { PdfParseError } from "./parsers/PdfParser.ts";
 export { FormatDetectionError } from "./parsers/index.ts";
+export { ColumnMappingCache, TrainingLogger } from "./training/index.ts";
+
+export type { TrainingLogEntry } from "./training/TrainingLogger.ts";
+
+export type {
+    ApplyMappingResult,
+    ColumnMapping,
+    ColumnTarget,
+    LLMColumnMappingResponse,
+} from "./mapping/types.ts";
 
 export type {
     DocumentFormat,
@@ -20,10 +30,3 @@ export type {
     Warning,
     WarningType,
 } from "./types.ts";
-
-export type {
-    ApplyMappingResult,
-    ColumnMapping,
-    ColumnTarget,
-    LLMColumnMappingResponse,
-} from "./mapping/types.ts";
