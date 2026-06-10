@@ -1,6 +1,6 @@
 {
     "name": "@juannpz/kaiju-items-transformer",
-    "version": "0.16.2",
+    "version": "0.17.0",
     "license": "MIT",
     "exports": "./mod.ts",
     "imports": {
