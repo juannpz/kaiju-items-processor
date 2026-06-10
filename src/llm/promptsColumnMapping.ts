@@ -50,7 +50,7 @@ REGLAS DE MAPEO:
    - "MARCA", "Fabricante", "Proveedor" → \`supplier_id\`
    - "Unidad de Medida", "Unidad de Medida (UM)", "UM", "Unidad", "UM x Unidad" → \`unit_of_measure\`
    - "Stock", "Cantidad", "Existencia", "UNIDAD CAJA GRANEL", "Unidades" → \`current_stock\`
-   - "IVA", "Alíc. IVA", "IVA %", "Neto+IVA/Un" → \`arca_iva_aliquot_id\`
+   - "IVA", "Alíc. IVA", "IVA %" → \`arca_iva_aliquot_id\`
 
 2. Columnas con nombre genérico como "col_0", "col_6":
    El parser les puso ese nombre porque el encabezado original estaba vacío.
@@ -71,7 +71,7 @@ REGLAS DE MAPEO:
      "Precio de Lista" → { "target": { "channel_name": "Lista", "channel_id": "lista" } }
    Si hay UNA sola columna de precio, usá channel_name: "Lista".
    Nombres de canales comunes en Argentina: "Lista", "PVP", "Neto", "Venta", "Mayorista", "Premium", "Contado", "Oferta".
-   IMPORTANTE: si ves la columna "Neto+IVA/Un" NO es un precio de canal — es info de IVA.
+   IMPORTANTE: "Neto+IVA/Un", "Precio neto+IVA", "Precio final c/IVA" son PRECIOS de canal (incluyen IVA), no info de IVA. Mapealas como price channels o ignorarlas si ya hay otros precios.
    Las columnas con "%" o "Bonif" o "Dto" o "Desc" NO son precios — son descuentos/bonificaciones.
 
 5. CATEGORÍA vs MARCA:
