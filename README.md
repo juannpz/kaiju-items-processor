@@ -57,7 +57,7 @@ const processor = new DocumentProcessor({
 const result = await processor.process({
     document: base64EncodedFile, // from HTTP request body
     format: "auto", // or "excel", "csv", "pdf"
-    filename: "inventario.xlsx", // helps with format detection
+    filename: "inventario.xlsx", // helps with format detection - opt
 });
 
 // 4. Inspect the result
