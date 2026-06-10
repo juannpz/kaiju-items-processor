@@ -1,5 +1,5 @@
 {
-    "name": "@juannpz/kaiju-items-processor",
+    "name": "@juannpz/kaiju-items-ingestor",
     "version": "0.16.1",
     "license": "MIT",
     "exports": "./mod.ts",
